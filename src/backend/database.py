@@ -1,15 +1,60 @@
 """
-MongoDB database configuration and setup for Mergington High School API
+In-memory database configuration for Mergington High School API
+Modified to work without MongoDB for development
 """
 
-from pymongo import MongoClient
 from argon2 import PasswordHasher
 
-# Connect to MongoDB
-client = MongoClient('mongodb://localhost:27017/')
-db = client['mergington_high']
-activities_collection = db['activities']
-teachers_collection = db['teachers']
+# In-memory storage for development
+activities_data = {}
+teachers_data = {}
+
+# Mock collection classes to mimic MongoDB interface
+class MockCollection:
+    def __init__(self, data_store):
+        self.data_store = data_store
+    
+    def count_documents(self, query):
+        return len(self.data_store)
+    
+    def insert_one(self, document):
+        _id = document.pop('_id')
+        self.data_store[_id] = document
+        return type('MockResult', (), {'inserted_id': _id})()
+    
+    def find(self, query=None):
+        for key, value in self.data_store.items():
+            result = {'_id': key, **value}
+            yield result
+    
+    def find_one(self, query):
+        if isinstance(query, dict) and '_id' in query:
+            key = query['_id']
+            if key in self.data_store:
+                return {'_id': key, **self.data_store[key]}
+        return None
+    
+    def update_one(self, query, update):
+        if isinstance(query, dict) and '_id' in query:
+            key = query['_id']
+            if key in self.data_store and '$push' in update:
+                field = list(update['$push'].keys())[0]
+                value = update['$push'][field]
+                if field not in self.data_store[key]:
+                    self.data_store[key][field] = []
+                self.data_store[key][field].append(value)
+                return type('MockResult', (), {'modified_count': 1})()
+            elif key in self.data_store and '$pull' in update:
+                field = list(update['$pull'].keys())[0]
+                value = update['$pull'][field]
+                if field in self.data_store[key] and value in self.data_store[key][field]:
+                    self.data_store[key][field].remove(value)
+                    return type('MockResult', (), {'modified_count': 1})()
+        return type('MockResult', (), {'modified_count': 0})()
+
+# Create mock collections
+activities_collection = MockCollection(activities_data)
+teachers_collection = MockCollection(teachers_data)
 
 # Methods
 def hash_password(password):
